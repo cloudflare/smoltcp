@@ -10,6 +10,21 @@ pub fn rand_u32() -> u32 {
     u32::from_ne_bytes(val)
 }
 
+pub fn rand_u16() -> u16 {
+    let mut val = [0; 2];
+    rand_bytes(&mut val);
+    u16::from_ne_bytes(val)
+}
+
+pub fn rand_source_port() -> u16 {
+    loop {
+        let res = rand_u16();
+        if res > 1024 {
+            return res;
+        }
+    }
+}
+
 /// Fill `buf` with random bytes.
 pub fn rand_bytes(buf: &mut [u8]) {
     extern "Rust" {

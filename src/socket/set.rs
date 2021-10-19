@@ -165,6 +165,8 @@ impl<'a> Set<'a> {
                     }
                     #[cfg(feature = "socket-dhcpv4")]
                     Socket::Dhcpv4(_) => may_remove = true,
+                    #[cfg(feature = "socket-dns")]
+                    Socket::Dns(_) => may_remove = true,
                 }
             }
             if may_remove {

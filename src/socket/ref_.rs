@@ -23,6 +23,8 @@ impl<'a> Session for crate::socket::UdpSocket<'a> {}
 impl<'a> Session for crate::socket::TcpSocket<'a> {}
 #[cfg(feature = "socket-dhcpv4")]
 impl Session for crate::socket::Dhcpv4Socket {}
+#[cfg(feature = "socket-dns")]
+impl<'a> Session for crate::socket::DnsSocket<'a> {}
 
 /// A smart pointer to a socket.
 ///

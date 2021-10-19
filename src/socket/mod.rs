@@ -16,6 +16,8 @@ use crate::time::Instant;
 
 #[cfg(feature = "socket-dhcpv4")]
 mod dhcpv4;
+#[cfg(feature = "socket-dns")]
+mod dns;
 #[cfg(all(
     feature = "socket-icmp",
     any(feature = "proto-ipv4", feature = "proto-ipv6")
@@ -56,6 +58,8 @@ pub use self::tcp::{SocketBuffer as TcpSocketBuffer, State as TcpState, TcpSocke
 #[cfg(feature = "socket-dhcpv4")]
 pub use self::dhcpv4::{Config as Dhcpv4Config, Dhcpv4Socket, Event as Dhcpv4Event};
 
+#[cfg(feature = "socket-dns")]
+pub use self::dns::{DnsQuery, DnsSocket};
 pub use self::set::{Handle as SocketHandle, Item as SocketSetItem, Set as SocketSet};
 pub use self::set::{Iter as SocketSetIter, IterMut as SocketSetIterMut};
 
@@ -99,6 +103,8 @@ pub enum Socket<'a> {
     Tcp(TcpSocket<'a>),
     #[cfg(feature = "socket-dhcpv4")]
     Dhcpv4(Dhcpv4Socket),
+    #[cfg(feature = "socket-dns")]
+    Dns(DnsSocket<'a>),
 }
 
 macro_rules! dispatch_socket {
@@ -120,6 +126,8 @@ macro_rules! dispatch_socket {
             &$( $mut_ )* Socket::Tcp(ref $( $mut_ )* $socket) => $code,
             #[cfg(feature = "socket-dhcpv4")]
             &$( $mut_ )* Socket::Dhcpv4(ref $( $mut_ )* $socket) => $code,
+            #[cfg(feature = "socket-dns")]
+            &$( $mut_ )* Socket::Dns(ref $( $mut_ )* $socket) => $code,
         }
     };
 }
@@ -182,6 +190,8 @@ from_socket!(UdpSocket<'a>, Udp);
 from_socket!(TcpSocket<'a>, Tcp);
 #[cfg(feature = "socket-dhcpv4")]
 from_socket!(Dhcpv4Socket, Dhcpv4);
+#[cfg(feature = "socket-dns")]
+from_socket!(DnsSocket<'a>, Dns);
 
 /// Data passed to sockets when processing.
 #[derive(Clone, Debug)]
