@@ -5,6 +5,7 @@
 #[cfg(feature = "async")]
 use core::task::Waker;
 use core::{cmp, fmt, mem};
+use std::time::SystemTime;
 
 #[cfg(feature = "async")]
 use crate::socket::WakerRegistration;
@@ -530,6 +531,8 @@ pub struct TcpSocket<'a> {
     /// each other which have the same ACK number.
     local_rx_dup_acks: u8,
 
+    previous_sack_ranges: [Option<(u32, u32)>; 3],
+
     /// Duration for Delayed ACK. If None no ACKs will be delayed.
     ack_delay: Option<Duration>,
     /// Delayed ack timer. If set, packets containing exclusively
@@ -606,6 +609,7 @@ impl<'a> TcpSocket<'a> {
             challenge_ack_timer: Instant::from_secs(0),
             nagle: true,
             cc: CongestionCtrlr::default(),
+            previous_sack_ranges: [None; 3],
 
             #[cfg(feature = "async")]
             rx_waker: WakerRegistration::new(),
@@ -1356,40 +1360,57 @@ impl<'a> TcpSocket<'a> {
         // If the remote supports selective acknowledgement, add the option to the outgoing
         // segment.
         if self.remote_has_sack {
-            net_debug!("sending sACK option with current assembler ranges");
-
-            // RFC 2018: The first SACK block (i.e., the one immediately following the kind and
-            // length fields in the option) MUST specify the contiguous block of data containing
-            // the segment which triggered this ACK, unless that segment advanced the
-            // Acknowledgment Number field in the header.
-            reply_repr.sack_ranges[0] = None;
 
             if let Some(last_seg_seq) = self.local_rx_last_seq.map(|s| s.0 as u32) {
-                reply_repr.sack_ranges[0] = self
-                    .assembler
-                    .iter_data(reply_repr.ack_number.map(|s| s.0 as usize).unwrap_or(0))
-                    .map(|(left, right)| (left as u32, right as u32))
-                    .find(|(left, right)| *left <= last_seg_seq && *right >= last_seg_seq);
-            }
+                net_debug!("sending sACK option with current assembler ranges");
 
-            if reply_repr.sack_ranges[0].is_none() {
-                // The matching segment was removed from the assembler, meaning the acknowledgement
-                // number has advanced, or there was no previous sACK.
-                //
-                // While the RFC says we SHOULD keep a list of reported sACK ranges, and iterate
-                // through those, that is currently infeasable. Instead, we offer the range with
-                // the lowest sequence number (if one exists) to hint at what segments would
-                // most quickly advance the acknowledgement number.
-                reply_repr.sack_ranges[0] = self
-                    .assembler
-                    .iter_data(reply_repr.ack_number.map(|s| s.0 as usize).unwrap_or(0))
-                    .map(|(left, right)| (left as u32, right as u32))
-                    .next();
+                let ack_number = reply_repr.ack_number.map(|s| s.0 as usize).unwrap_or(0);
+
+                for (start, end) in self.assembler.iter_data(ack_number) {
+                    let (start, end) = (start as u32, end as u32);
+
+                    if start <= last_seg_seq && last_seg_seq <= end {
+                        reply_repr.sack_ranges[0] = Some((start, end));
+                        break;
+                    }
+                }
+
+                if let Some((latest_left, latest_right)) = reply_repr.sack_ranges[0] {
+
+                    if let Some((left, right)) = self.previous_sack_ranges[0] {
+                        if right < latest_left || latest_right < left {
+                            reply_repr.sack_ranges[1] = Some((left, right));
+                        }
+
+                        if let Some((left, right)) = self.previous_sack_ranges[1] {
+                            if right < latest_left || latest_right < left {
+                                if reply_repr.sack_ranges[1].is_some() {
+                                    reply_repr.sack_ranges[2] = Some((left, right));
+                                } else {
+                                    reply_repr.sack_ranges[1] = Some((left, right));
+
+                                    if let Some((left, right)) = self.previous_sack_ranges[2] {
+                                        if right < latest_left || latest_right < left {
+                                            reply_repr.sack_ranges[2] = Some((left, right));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    reply_repr.sack_ranges = self.previous_sack_ranges;
+                }
             }
         }
 
+        self.previous_sack_ranges = reply_repr.sack_ranges;
+
+        println!("sACK ranges {:?}, {:?}, {:?} ", reply_repr.sack_ranges[0], reply_repr.sack_ranges[1], reply_repr.sack_ranges[2]);
         // Since the sACK option may have changed the length of the payload, update that.
         ip_reply_repr.set_payload_len(reply_repr.buffer_len());
+
+        println!("{:?} ---> ", reply_repr.ack_number.unwrap());
         (ip_reply_repr, reply_repr)
     }
 
@@ -1404,7 +1425,7 @@ impl<'a> TcpSocket<'a> {
         }
 
         // Rate-limit to 1 per second max.
-        self.challenge_ack_timer = cx.now + Duration::from_secs(1);
+        self.challenge_ack_timer = cx.now + Duration::from_secs(10);
 
         return Some(self.ack_reply(ip_repr, repr));
     }
@@ -1609,6 +1630,7 @@ impl<'a> TcpSocket<'a> {
         let segment_start = repr.seq_number;
         let segment_end = repr.seq_number + repr.segment_len();
 
+        println!("<--- ({:?} - {:?})", segment_start, segment_end); 
         let payload_offset;
         match self.state {
             // In LISTEN and SYN-SENT states, we have not yet synchronized with the remote end.
@@ -1818,6 +1840,7 @@ impl<'a> TcpSocket<'a> {
                 self.remote_last_seq = self.local_seq_no + 1;
                 self.remote_last_ack = Some(repr.seq_number);
                 self.remote_win_scale = repr.window_scale;
+                self.remote_has_sack = repr.sack_permitted;
                 // Remote doesn't support window scaling, don't do it.
                 if self.remote_win_scale.is_none() {
                     self.remote_win_shift = 0;
@@ -2029,6 +2052,7 @@ impl<'a> TcpSocket<'a> {
             return Ok(None);
         }
 
+        let _tstamp = SystemTime::now();
         let assembler_was_empty = self.assembler.is_empty();
 
         // Try adding payload octets to the assembler.
@@ -2389,6 +2413,7 @@ impl<'a> TcpSocket<'a> {
             payload: &[],
         };
 
+        println!("dispatch {:?} ---> ", repr.ack_number.unwrap());
         match self.state {
             // We transmit an RST in the CLOSED state. If we ended up in the CLOSED state
             // with a specified endpoint, it means that the socket was aborted.
