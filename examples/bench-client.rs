@@ -91,7 +91,9 @@ fn main() {
                 loop {
                     match socket
                         .recv(|data| {
-                            debug!("recv {} bytes of data", data.len());
+                            if !data.is_empty() {
+                                debug!("recv {} bytes of data", data.len());
+                            }
                             bytes_received += data.len();
                             (data.len(), data.len())
                         }) {

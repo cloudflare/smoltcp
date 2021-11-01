@@ -1,0 +1,3 @@
+html/giant-file
+logs/*.log
+logs/*.pid
