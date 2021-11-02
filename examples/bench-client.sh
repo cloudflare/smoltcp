@@ -22,8 +22,14 @@ sudo ip netns add smoltcp-bench
 sudo ip link add veth-delay type veth peer name veth-delay2 netns smoltcp-bench
 sudo ip addr add 192.0.2.1/24 dev veth-delay
 sudo ip link set up veth-delay
+sudo ip netns exec smoltcp-bench ethtool -K veth-delay2 tso off
 sudo ip -n smoltcp-bench addr add 192.0.2.2/24 dev veth-delay2
 sudo ip -n smoltcp-bench link set up veth-delay2
+sudo ethtool -K veth-delay tso off
+
+# Capture traffic for debugging
+sudo tcpdump -i veth-delay -s 100 -w curl.pcap &
+sudo tcpdump -i smoltcp0 -s 100 -w smoltcp.pcap &
 
 function run_tests {
     echo "via curl:"
