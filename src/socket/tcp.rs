@@ -1818,6 +1818,7 @@ impl<'a> TcpSocket<'a> {
                 self.remote_last_seq = self.local_seq_no + 1;
                 self.remote_last_ack = Some(repr.seq_number);
                 self.remote_win_scale = repr.window_scale;
+                self.remote_has_sack = repr.sack_permitted;
                 // Remote doesn't support window scaling, don't do it.
                 if self.remote_win_scale.is_none() {
                     self.remote_win_shift = 0;
