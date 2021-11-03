@@ -1,16 +1,16 @@
 mod utils;
 
-use log::{info, debug};
+use log::{debug, info};
 use std::collections::BTreeMap;
 use std::os::unix::io::AsRawFd;
 use std::str::FromStr;
 
-use smoltcp::Error;
 use smoltcp::iface::{InterfaceBuilder, NeighborCache, Routes};
-use smoltcp::phy::{wait as phy_wait, Device, Medium};
+use smoltcp::phy::{wait as phy_wait, Device, DeviceCapabilities, Medium};
 use smoltcp::socket::{SocketSet, TcpSocket, TcpSocketBuffer};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address};
+use smoltcp::Error;
 
 fn main() {
     utils::setup_logging("");
@@ -26,6 +26,10 @@ fn main() {
 
     let fd = device.as_raw_fd();
     let device = utils::parse_middleware_options(&mut matches, device, /*loopback=*/ false);
+    let device = YieldDevice {
+        device,
+        yield_count: 2,
+    };
     let address = IpAddress::from_str(&matches.free[0]).expect("invalid address format");
     let port = u16::from_str(&matches.free[1]).expect("invalid port format");
 
@@ -116,4 +120,36 @@ fn main() {
         phy_wait(fd, iface.poll_delay(&sockets, timestamp)).expect("wait error");
     }
     info!("received {} bytes total", bytes_received);
+}
+
+struct YieldDevice<D> {
+    device: D,
+    yield_count: u8,
+}
+
+impl<'a, D> Device<'a> for YieldDevice<D>
+where
+    D: for<'b> Device<'b>,
+{
+    type RxToken = <D as Device<'a>>::RxToken;
+    type TxToken = <D as Device<'a>>::TxToken;
+
+    fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
+        if self.yield_count > 0 {
+            if let Some((r, t)) = self.device.receive() {
+                self.yield_count -= 1;
+                return Some((r, t));
+            }
+        }
+        self.yield_count = 2;
+        None
+    }
+
+    fn transmit(&'a mut self) -> Option<Self::TxToken> {
+        self.device.transmit()
+    }
+
+    fn capabilities(&self) -> DeviceCapabilities {
+        self.device.capabilities()
+    }
 }
